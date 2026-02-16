@@ -47,10 +47,6 @@
               ];
             })
           ];
-
-          env = { };
-
-          shellHook = "";
         };
 
         formatter = pkgs.nixfmt;
