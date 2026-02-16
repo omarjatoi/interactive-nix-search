@@ -13,7 +13,7 @@ Built with [ratatui](https://github.com/ratatui/ratatui) and [nucleo](https://gi
 ### Installation
 
 #### nix profile
- 
+
 Try without installing:
 
 ```
@@ -46,11 +46,13 @@ home.packages = [
 ];
 ```
 
-Build from source:
+#### Build from source:
 
 ```
 nix build
-# or
+```
+or
+```
 cargo build --release
 ```
 
