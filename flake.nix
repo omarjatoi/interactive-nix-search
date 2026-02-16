@@ -26,10 +26,18 @@
         };
       in
       {
+        packages.default = pkgs.rustPlatform.buildRustPackage {
+          pname = "interactive-nix-search";
+          version = "0.1.0";
+          src = ./.;
+          cargoLock.lockFile = ./Cargo.lock;
+        };
+
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             self.formatter.${system}
 
+            # Rust toolchain (stable) via rust-overlay
             (rust-bin.stable.latest.default.override {
               extensions = [
                 "rust-src"
@@ -39,6 +47,10 @@
               ];
             })
           ];
+
+          env = { };
+
+          shellHook = "";
         };
 
         formatter = pkgs.nixfmt;
