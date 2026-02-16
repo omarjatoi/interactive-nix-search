@@ -2,11 +2,14 @@
 
 ![screenshot](screenshot.png)
 
-Interactive fuzzy finder for Nix packages. Searches any flake (defaults to `nixpkgs`) and supports multi-token, out-of-order matching against package name, version, package set, and description.
+Interactive fuzzy finder for Nix packages. Searches any flake (defaults to `nixpkgs`) and supports multi-token, out-of-order matching
+against package name, version, package set, and description. Results are cached to `~/.cache/interactive-nix-search/` with a 24-hour TTL.
 
-Built with [ratatui](https://github.com/ratatui/ratatui) and [nucleo](https://github.com/helix-editor/nucleo) (the fuzzy matcher from Helix).
+Built with [ratatui](https://github.com/ratatui/ratatui) and [nucleo](https://github.com/helix-editor/nucleo).
 
 ## Usage
+
+For now, you can run this with `nix run github:omarjatoi/interactive-nix-search`, or install build and install it yourself.
 
 ```
 interactive-nix-search [OPTIONS]
@@ -49,7 +52,6 @@ or
 cargo build --release
 ```
 
-Results are cached to `~/.cache/interactive-nix-search/` with a 24-hour TTL.
 
 ## License
 

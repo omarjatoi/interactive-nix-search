@@ -28,10 +28,19 @@ impl App {
 
         let injector = matcher.injector();
         for (idx, pkg) in packages.iter().enumerate() {
-            let search_text = format!(
-                "{} {} {} {}",
-                pkg.name, pkg.package_set, pkg.version, pkg.description
-            );
+            // Name appears first so nucleo's positional scoring prioritises it.
+            // Name is repeated to further boost packages that match by name.
+            let search_text = if pkg.package_set.is_empty() {
+                format!(
+                    "{} {} {} {}",
+                    pkg.name, pkg.name, pkg.version, pkg.description
+                )
+            } else {
+                format!(
+                    "{} {}.{} {} {} {}",
+                    pkg.name, pkg.package_set, pkg.name, pkg.name, pkg.version, pkg.description
+                )
+            };
             injector.push(idx, |_, cols| {
                 cols[0] = Utf32String::from(search_text.as_str());
             });
@@ -286,7 +295,6 @@ fn render_input(f: &mut Frame, app: &App, area: Rect) {
     );
     f.render_widget(input, area);
 
-    // Place cursor after the text
     let cursor_x = area.x + 1 + app.cursor as u16;
     let cursor_y = area.y + 1;
     f.set_cursor_position((cursor_x, cursor_y));
@@ -323,7 +331,6 @@ fn render_results(f: &mut Frame, app: &App, area: Rect) {
         (start, end)
     };
 
-    // Build display name (package_set.name) for visible items to compute column width
     let visible: Vec<_> = (start..end)
         .filter_map(|i| {
             let item = snapshot.get_matched_item(i)?;
