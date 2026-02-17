@@ -11,7 +11,7 @@ use ratatui::Viewport;
 #[command(name = "nix-search", about = "Interactive fuzzy search for nixpkgs")]
 struct Args {
     /// Height of the TUI in terminal rows
-    #[arg(long, default_value_t = 40)]
+    #[arg(long, default_value_t = 36)]
     height: u16,
 
     /// Use fullscreen viewport

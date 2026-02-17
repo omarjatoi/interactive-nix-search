@@ -311,7 +311,7 @@ fn render_results(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    const SCROLL_PADDING: u32 = 5;
+    const SCROLL_PADDING: u32 = 18;
     let selected = app.selected as u32;
 
     let ideal_start = selected.saturating_sub(SCROLL_PADDING);
