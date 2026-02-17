@@ -1,7 +1,7 @@
 mod nix;
 mod ui;
 
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::process::Command;
 
 use clap::Parser;
@@ -30,7 +30,7 @@ struct Args {
 fn main() -> io::Result<()> {
     let args = Args::parse();
 
-    let viewport = if args.full {
+    let viewport = if args.full || !io::stdout().is_terminal() {
         Viewport::Fullscreen
     } else {
         Viewport::Inline(args.height)
