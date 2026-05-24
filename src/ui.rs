@@ -193,7 +193,7 @@ pub fn run(flake: &str, viewport: Viewport) -> io::Result<Option<String>> {
     }
     app.matcher.tick(10);
 
-    let result = run_loop(&mut terminal, &mut app, bg_rx);
+    let result = run_loop(&mut terminal, &mut app, bg_rx, flake);
 
     cleanup(&mut terminal, fullscreen)?;
 
@@ -217,6 +217,7 @@ fn run_loop(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stderr>>,
     app: &mut App,
     mut bg_rx: Option<Receiver<BgResult>>,
+    flake: &str,
 ) -> io::Result<Option<String>> {
     loop {
         app.matcher.tick(10);
@@ -262,6 +263,12 @@ fn run_loop(
                     }
                     return Ok(None);
                 }
+                Action::Refresh => {
+                    if bg_rx.is_none() {
+                        bg_rx = Some(spawn_fetch(flake));
+                        app.bg_status = BgStatus::Fetching;
+                    }
+                }
             }
         }
     }
@@ -271,12 +278,16 @@ enum Action {
     Continue,
     Quit,
     Select,
+    Refresh,
 }
 
 fn handle_key(app: &mut App, key: KeyEvent) -> Action {
     match (key.modifiers, key.code) {
         (_, KeyCode::Esc) => Action::Quit,
         (KeyModifiers::CONTROL, KeyCode::Char('c')) => Action::Quit,
+
+        // Force a background refresh of the package index
+        (KeyModifiers::CONTROL, KeyCode::Char('r')) => Action::Refresh,
 
         // Result navigation
         (KeyModifiers::CONTROL, KeyCode::Char('n')) => {

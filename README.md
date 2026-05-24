@@ -4,7 +4,8 @@
 
 Interactive fuzzy finder for Nix packages. Searches any flake (defaults to `nixpkgs`) and supports multi-token,
 out-of-order matching against package name, version, package set, and description. Search results are cached to
-`~/.cache/interactive-nix-search/` with a 24-hour TTL.
+`~/.cache/interactive-nix-search/`; a cache older than 1 hour is still shown instantly while a fresh index is
+fetched in the background. Press `Ctrl-r` to force a refresh.
 
 Built with [ratatui](https://github.com/ratatui/ratatui) and [nucleo](https://github.com/helix-editor/nucleo).
 
@@ -64,7 +65,7 @@ interactive-nix-search [OPTIONS]
 
 | Option | Description |
 |---|---|
-| `--height <N>` | Height of the inline viewport in rows (default: 40) |
+| `--height <N>` | Height of the inline viewport in rows (default: 36) |
 | `-f`, `--full` | Fullscreen mode (uses alternate screen buffer) |
 | `--flake <FLAKE>` | Flake to search (default: `nixpkgs`) |
 | `-a`, `--add` | Install the selected package via `nix profile add` |
@@ -86,6 +87,7 @@ nix shell nixpkgs#$(interactive-nix-search)
 | `Ctrl-b` / `Ctrl-f` | Move cursor back / forward one character |
 | `Ctrl-u` / `Ctrl-k` | Delete to start / end of input |
 | `Ctrl-d` | Delete character at cursor |
+| `Ctrl-r` | Force refresh the package index |
 
 
 ## License

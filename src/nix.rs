@@ -7,7 +7,7 @@ use std::time::SystemTime;
 
 use serde::Deserialize;
 
-const CACHE_MAX_AGE_SECS: u64 = 24 * 60 * 60;
+const CACHE_MAX_AGE_SECS: u64 = 60 * 60;
 
 #[derive(Debug, Clone)]
 pub struct Package {
