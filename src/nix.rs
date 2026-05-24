@@ -30,6 +30,12 @@ struct NixSearchEntry {
     version: String,
 }
 
+pub struct CachedPackages {
+    pub packages: Vec<Package>,
+    /// True if the cache file is within the TTL window.
+    pub fresh: bool,
+}
+
 /// Strip the `legacyPackages.<system>.` prefix and split into (package_set, leaf_name).
 /// e.g. "legacyPackages.aarch64-darwin.python314Packages.uv" -> ("python314Packages", "uv")
 /// e.g. "legacyPackages.aarch64-darwin.ruff" -> ("", "ruff")
@@ -95,14 +101,21 @@ fn parse_packages(data: &[u8]) -> io::Result<Vec<Package>> {
     Ok(packages)
 }
 
-pub fn load_packages(flake: &str) -> io::Result<Vec<Package>> {
-    if let Some(path) = cache_path(flake)
-        && is_cache_fresh(&path)
-    {
-        let data = fs::read(&path)?;
-        return parse_packages(&data);
+/// Load packages from the on-disk cache, regardless of TTL.
+/// Returns None if no usable cache exists.
+pub fn load_from_cache(flake: &str) -> Option<CachedPackages> {
+    let path = cache_path(flake)?;
+    let data = fs::read(&path).ok()?;
+    let packages = parse_packages(&data).ok()?;
+    if packages.is_empty() {
+        return None;
     }
+    let fresh = is_cache_fresh(&path);
+    Some(CachedPackages { packages, fresh })
+}
 
+/// Run `nix search`, write the cache, and return parsed packages.
+pub fn fetch_fresh(flake: &str) -> io::Result<Vec<Package>> {
     let output = Command::new("nix")
         .args(["search", flake, "--json", "."])
         .output()?;

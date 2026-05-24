@@ -1,5 +1,7 @@
 use std::io::{self, stderr};
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, TryRecvError};
+use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use crossterm::execute;
@@ -14,45 +16,72 @@ use ratatui::{Frame, Terminal, TerminalOptions, Viewport};
 
 use crate::nix::Package;
 
+const UPDATED_NOTICE_DURATION: Duration = Duration::from_secs(4);
+
+enum BgStatus {
+    None,
+    Fetching,
+    Updated(Instant),
+    Failed(String),
+}
+
+type BgResult = io::Result<Vec<Package>>;
+
 struct App {
     query: String,
     cursor: usize,
     selected: usize,
     matcher: Nucleo<usize>,
     packages: Vec<Package>,
+    bg_status: BgStatus,
+}
+
+fn build_search_text(pkg: &Package) -> String {
+    // Name appears first so nucleo's positional scoring prioritises it.
+    // Name is repeated to further boost packages that match by name.
+    if pkg.package_set.is_empty() {
+        format!(
+            "{} {} {} {}",
+            pkg.name, pkg.name, pkg.version, pkg.description
+        )
+    } else {
+        format!(
+            "{} {}.{} {} {} {}",
+            pkg.name, pkg.package_set, pkg.name, pkg.name, pkg.version, pkg.description
+        )
+    }
+}
+
+fn build_matcher(packages: &[Package]) -> Nucleo<usize> {
+    let matcher = Nucleo::new(Config::DEFAULT.match_paths(), Arc::new(|| {}), None, 1);
+    let injector = matcher.injector();
+    for (idx, pkg) in packages.iter().enumerate() {
+        let search_text = build_search_text(pkg);
+        injector.push(idx, |_, cols| {
+            cols[0] = Utf32String::from(search_text.as_str());
+        });
+    }
+    matcher
 }
 
 impl App {
     fn new(packages: Vec<Package>) -> Self {
-        let matcher = Nucleo::new(Config::DEFAULT.match_paths(), Arc::new(|| {}), None, 1);
-
-        let injector = matcher.injector();
-        for (idx, pkg) in packages.iter().enumerate() {
-            // Name appears first so nucleo's positional scoring prioritises it.
-            // Name is repeated to further boost packages that match by name.
-            let search_text = if pkg.package_set.is_empty() {
-                format!(
-                    "{} {} {} {}",
-                    pkg.name, pkg.name, pkg.version, pkg.description
-                )
-            } else {
-                format!(
-                    "{} {}.{} {} {} {}",
-                    pkg.name, pkg.package_set, pkg.name, pkg.name, pkg.version, pkg.description
-                )
-            };
-            injector.push(idx, |_, cols| {
-                cols[0] = Utf32String::from(search_text.as_str());
-            });
-        }
-
+        let matcher = build_matcher(&packages);
         App {
             query: String::new(),
             cursor: 0,
             selected: 0,
             matcher,
             packages,
+            bg_status: BgStatus::None,
         }
+    }
+
+    fn replace_packages(&mut self, packages: Vec<Package>) {
+        self.matcher = build_matcher(&packages);
+        self.packages = packages;
+        self.selected = 0;
+        self.update_pattern();
     }
 
     fn update_pattern(&mut self) {
@@ -77,6 +106,36 @@ impl App {
         let item = self.matcher.snapshot().get_matched_item(index)?;
         Some(&self.packages[*item.data])
     }
+
+    fn status_message(&self) -> Option<(String, Color)> {
+        match &self.bg_status {
+            BgStatus::None => None,
+            BgStatus::Fetching => Some((
+                "⟳ Using cached results... fetching in the background".to_string(),
+                Color::Yellow,
+            )),
+            BgStatus::Updated(at) => {
+                if at.elapsed() < UPDATED_NOTICE_DURATION {
+                    Some(("✓ Index updated".to_string(), Color::Green))
+                } else {
+                    None
+                }
+            }
+            BgStatus::Failed(err) => Some((
+                format!("✗ Background fetch failed: {err}"),
+                Color::Red,
+            )),
+        }
+    }
+}
+
+fn spawn_fetch(flake: &str) -> Receiver<BgResult> {
+    let flake = flake.to_string();
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(crate::nix::fetch_fresh(&flake));
+    });
+    rx
 }
 
 pub fn run(flake: &str, viewport: Viewport) -> io::Result<Option<String>> {
@@ -93,31 +152,48 @@ pub fn run(flake: &str, viewport: Viewport) -> io::Result<Option<String>> {
 
     crossterm::terminal::enable_raw_mode()?;
 
-    // Show loading message inside the viewport
-    let loading_msg = format!("Loading {flake} index...");
-    terminal.draw(|f| {
-        let area = f.area();
-        let msg = Paragraph::new(loading_msg.as_str()).style(Style::default().fg(Color::DarkGray));
-        f.render_widget(msg, area);
-    })?;
+    // Try the on-disk cache first so the UI is interactive immediately.
+    let cached = crate::nix::load_from_cache(flake);
 
-    let packages = match crate::nix::load_packages(flake) {
-        Ok(p) if !p.is_empty() => p,
-        Ok(_) => {
-            cleanup(&mut terminal, fullscreen)?;
-            eprintln!("No packages found.");
-            return Ok(None);
+    let (packages, bg_rx) = match cached {
+        Some(cache) if cache.fresh => (cache.packages, None),
+        Some(cache) => {
+            // Stale cache: show it now, refresh in the background.
+            let rx = spawn_fetch(flake);
+            (cache.packages, Some(rx))
         }
-        Err(e) => {
-            cleanup(&mut terminal, fullscreen)?;
-            return Err(e);
+        None => {
+            // No cache: fetch synchronously with a loading message.
+            let loading_msg = format!("Loading {flake} index...");
+            terminal.draw(|f| {
+                let area = f.area();
+                let msg = Paragraph::new(loading_msg.as_str())
+                    .style(Style::default().fg(Color::DarkGray));
+                f.render_widget(msg, area);
+            })?;
+
+            match crate::nix::fetch_fresh(flake) {
+                Ok(p) if !p.is_empty() => (p, None),
+                Ok(_) => {
+                    cleanup(&mut terminal, fullscreen)?;
+                    eprintln!("No packages found.");
+                    return Ok(None);
+                }
+                Err(e) => {
+                    cleanup(&mut terminal, fullscreen)?;
+                    return Err(e);
+                }
+            }
         }
     };
 
     let mut app = App::new(packages);
+    if bg_rx.is_some() {
+        app.bg_status = BgStatus::Fetching;
+    }
     app.matcher.tick(10);
 
-    let result = run_loop(&mut terminal, &mut app);
+    let result = run_loop(&mut terminal, &mut app, bg_rx);
 
     cleanup(&mut terminal, fullscreen)?;
 
@@ -140,13 +216,41 @@ fn cleanup(
 fn run_loop(
     terminal: &mut Terminal<ratatui::backend::CrosstermBackend<io::Stderr>>,
     app: &mut App,
+    mut bg_rx: Option<Receiver<BgResult>>,
 ) -> io::Result<Option<String>> {
     loop {
         app.matcher.tick(10);
 
+        // Poll the background fetch (if any) without blocking.
+        if let Some(rx) = bg_rx.as_ref() {
+            match rx.try_recv() {
+                Ok(Ok(packages)) if !packages.is_empty() => {
+                    app.replace_packages(packages);
+                    app.bg_status = BgStatus::Updated(Instant::now());
+                    bg_rx = None;
+                }
+                Ok(Ok(_)) => {
+                    // Empty result: keep showing cached data.
+                    app.bg_status =
+                        BgStatus::Failed("fetch returned no packages".to_string());
+                    bg_rx = None;
+                }
+                Ok(Err(e)) => {
+                    app.bg_status = BgStatus::Failed(e.to_string());
+                    bg_rx = None;
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => {
+                    app.bg_status =
+                        BgStatus::Failed("background fetch thread died".to_string());
+                    bg_rx = None;
+                }
+            }
+        }
+
         terminal.draw(|f| render(f, app))?;
 
-        if event::poll(std::time::Duration::from_millis(50))?
+        if event::poll(Duration::from_millis(50))?
             && let Event::Key(key) = event::read()?
         {
             match handle_key(app, key) {
@@ -277,11 +381,27 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Action {
 fn render(f: &mut Frame, app: &App) {
     let area = f.area();
 
-    let [input_area, results_area] =
-        Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).areas(area);
+    let status = app.status_message();
 
-    render_input(f, app, input_area);
-    render_results(f, app, results_area);
+    if let Some((msg, color)) = status {
+        let [input_area, status_area, results_area] = Layout::vertical([
+            Constraint::Length(3),
+            Constraint::Length(1),
+            Constraint::Min(1),
+        ])
+        .areas(area);
+
+        render_input(f, app, input_area);
+        let status_widget = Paragraph::new(msg).style(Style::default().fg(color));
+        f.render_widget(status_widget, status_area);
+        render_results(f, app, results_area);
+    } else {
+        let [input_area, results_area] =
+            Layout::vertical([Constraint::Length(3), Constraint::Min(1)]).areas(area);
+
+        render_input(f, app, input_area);
+        render_results(f, app, results_area);
+    }
 }
 
 fn render_input(f: &mut Frame, app: &App, area: Rect) {
